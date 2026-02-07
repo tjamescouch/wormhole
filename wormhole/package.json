@@ -1,0 +1,18 @@
+{
+  "name": "wormhole",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "wormhole": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test --experimental-strip-types wormhole.test.ts",
+    "start": "node dist/cli.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^22.0.0"
+  }
+}
