@@ -19,6 +19,7 @@ PIPELINE="${SCRIPT_DIR}/pipeline.sh"
 LIMA_VM="${LIMA_VM:-thesystem}"
 LIMA_PODMAN_SOCK="/run/user/501/podman/podman.sock"
 LOCAL_PODMAN_SOCK="${LOCAL_PODMAN_SOCK:-/tmp/lima-podman.sock}"
+LIMA_WORMHOLE_PORT="${LIMA_WORMHOLE_PORT:-8787}"
 
 # ── SSH config for Lima ───────────────────────────────────────────────────────
 
@@ -29,6 +30,7 @@ get_lima_port() {
 start_tunnel() {
     local port="$1"
     rm -f "$LOCAL_PODMAN_SOCK"
+    # Forward both podman socket and wormhole relay port from Lima to Mac
     ssh -N -f \
         -i ~/.lima/_config/user \
         -o StrictHostKeyChecking=no \
@@ -36,7 +38,9 @@ start_tunnel() {
         -o LogLevel=ERROR \
         -o ExitOnForwardFailure=yes \
         -L "${LOCAL_PODMAN_SOCK}:${LIMA_PODMAN_SOCK}" \
+        -L "127.0.0.1:${LIMA_WORMHOLE_PORT}:localhost:${LIMA_WORMHOLE_PORT}" \
         -p "$port" jamescouch@127.0.0.1
+    echo "[run-pipeline] Wormhole relay forwarded: localhost:${LIMA_WORMHOLE_PORT} → Lima:${LIMA_WORMHOLE_PORT}" >&2
 }
 
 ensure_tunnel() {

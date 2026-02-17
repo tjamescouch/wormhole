@@ -157,13 +157,55 @@ container_heads() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STAGE 3 — COPY (tar pipe: container → wormhole)
+# STAGE 3 — COPY (E2E encrypted via wormhole: container → relay → host)
 # ═══════════════════════════════════════════════════════════════════════════
+#
+# WORMHOLE_RELAY_CONTAINER — URL containers use to reach the relay
+#                             (default: http://host.containers.internal:8787)
+# WORMHOLE_RELAY_HOST      — URL the host uses to receive from the relay
+#                             (default: http://localhost:8787)
+#
+# Falls back to tar pipe if wormhole CLI is not available in the container.
 
-copy_repo() {
+WORMHOLE_RELAY_CONTAINER="${WORMHOLE_RELAY_CONTAINER:-http://host.containers.internal:8787}"
+WORMHOLE_RELAY_HOST="${WORMHOLE_RELAY_HOST:-http://localhost:8787}"
+
+# Check once per run if wormhole is available in a container
+_WORMHOLE_CHECKED=""
+_WORMHOLE_AVAILABLE=false
+
+wormhole_available() {
+    local cid="$1"
+    if [[ "$_WORMHOLE_CHECKED" != "$cid" ]]; then
+        _WORMHOLE_CHECKED="$cid"
+        if podman exec "$cid" which wormhole &>/dev/null; then
+            _WORMHOLE_AVAILABLE=true
+        else
+            _WORMHOLE_AVAILABLE=false
+        fi
+    fi
+    [[ "$_WORMHOLE_AVAILABLE" == "true" ]]
+}
+
+wormhole_send_receive() {
+    local cid="$1" src_path="$2" dest="$3"
+    mkdir -p "$dest"
+
+    local send_output code
+    send_output=$(podman exec "$cid" wormhole send "$src_path" \
+        --relay "$WORMHOLE_RELAY_CONTAINER" 2>&1) || return 1
+    # Parse code from: "  wormhole receive <code> ..."
+    code=$(echo "$send_output" | grep -oE 'wormhole receive [0-9]+-[a-z]+-[a-z]+' | awk '{print $3}' | head -1)
+    [[ -z "$code" ]] && { vlog "WORMHOLE: could not parse code from send output"; return 1; }
+
+    vlog "WORMHOLE: send → code=$code"
+    wormhole receive "$code" --relay "$WORMHOLE_RELAY_HOST" --output "$dest" 2>&1 || return 1
+    return 0
+}
+
+tar_copy_repo() {
     local cid="$1" repo="$2" dest="$3"
     mkdir -p "$dest"
-    # tar may exit 1 when files change mid-read (containers are live) — that's fine
     set +o pipefail
     if [[ "$repo" == "." ]]; then
         podman exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" -C "$SOURCE" . \
@@ -175,11 +217,43 @@ copy_repo() {
     set -o pipefail
 }
 
+copy_repo() {
+    local cid="$1" repo="$2" dest="$3"
+    local src_path
+    if [[ "$repo" == "." ]]; then
+        src_path="$SOURCE"
+    else
+        src_path="${SOURCE}/${repo}"
+    fi
+
+    if wormhole_available "$cid"; then
+        vlog "COPY (wormhole E2E): ${repo}"
+        wormhole_send_receive "$cid" "$src_path" "$dest" && return 0
+        vlog "WORMHOLE failed, falling back to tar pipe"
+    fi
+    tar_copy_repo "$cid" "$repo" "$dest"
+}
+
 copy_full() {
     local cid="$1" dest="$2"
     local tmp="${dest}.tmp.$$"
     rm -rf "$tmp"; mkdir -p "$tmp"
-    # tar may exit 1 when files change mid-read (containers are live) — that's fine
+
+    if wormhole_available "$cid"; then
+        vlog "COPY FULL (wormhole E2E)"
+        if wormhole_send_receive "$cid" "$SOURCE" "$tmp"; then
+            if [[ -d "$tmp" ]] && [[ -n "$(ls -A "$tmp" 2>/dev/null)" ]]; then
+                mkdir -p "$dest"
+                cp -a "$tmp/." "$dest/" 2>/dev/null || true
+                rm -rf "$tmp"
+                return 0
+            fi
+        fi
+        vlog "WORMHOLE failed, falling back to tar pipe"
+        rm -rf "$tmp"; mkdir -p "$tmp"
+    fi
+
+    # Fallback: tar pipe
     set +o pipefail
     podman exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" \
         -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")" 2>/dev/null \
