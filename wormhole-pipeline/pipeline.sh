@@ -472,7 +472,7 @@ main() {
         local synced=0 errors=0
 
         # ── Sync + Push each container ───────────────────────────────────
-        while IFS=' ' read -r cid cname; do
+        while IFS=' ' read -r cid cname <&3; do
             [[ -z "$cid" ]] && continue
             local name; name=$(agent_name "$cname")
             [[ -z "$name" ]] && continue
@@ -524,7 +524,7 @@ main() {
                     errors=$((errors + 1))
                 fi
             done
-        done < <(discover)
+        done 3< <(discover)
 
         first_run=false
         STATS_ERRORS=$((STATS_ERRORS + errors))
