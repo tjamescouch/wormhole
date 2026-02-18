@@ -13,9 +13,31 @@ import path from 'node:path';
 import { collectFiles, pack, compress, decompress, isCompressed } from '../../slurp/slurp.js';
 
 export async function packDirectory(dirPath: string): Promise<Buffer> {
-  const files = await collectFiles(dirPath);
-  const name = path.basename(dirPath);
+  const absDir = path.resolve(dirPath);
+  const files = collectFiles(absDir, absDir);
+  const name = path.basename(absDir);
   const v1 = pack(files, { name });
+  const v2 = compress(v1, { name });
+  return Buffer.from(v2, 'utf-8');
+}
+
+/**
+ * Pack multiple directories into a single archive.
+ * Each directory's files are prefixed with the directory's basename
+ * to avoid path collisions across sources.
+ */
+export async function packDirectories(dirPaths: string[]): Promise<Buffer> {
+  const allFiles: Array<{ fullPath: string; relPath: string }> = [];
+
+  for (const dirPath of dirPaths) {
+    const absDir = path.resolve(dirPath);
+    const baseDir = path.dirname(absDir);
+    const files = collectFiles(absDir, baseDir);
+    allFiles.push(...files);
+  }
+
+  const name = dirPaths.map(d => path.basename(path.resolve(d))).join('+');
+  const v1 = pack(allFiles, { name });
   const v2 = compress(v1, { name });
   return Buffer.from(v2, 'utf-8');
 }

@@ -9,7 +9,7 @@ import path from 'node:path';
 import { deriveEncryptionKey, deriveRelayKey, encrypt, decrypt } from './crypto.js';
 import { generateCode, parseCode, isValidCode } from './codes.js';
 import { upload, download, type TransferOptions } from './transfer.js';
-import { packDirectory, isSlurpArchive, extractArchive } from './slurp.js';
+import { packDirectory, packDirectories, isSlurpArchive, extractArchive } from './slurp.js';
 
 export interface SendOptions extends TransferOptions {
   code?: string; // user-provided code (otherwise auto-generated)
@@ -29,10 +29,9 @@ export interface ReceiveResult {
 }
 
 /**
- * Send a file or directory through the wormhole.
+ * Send a file, directory, or multiple directories through the wormhole.
  */
-export async function send(inputPath: string, opts: SendOptions = {}): Promise<SendResult> {
-  const stat = fs.statSync(inputPath);
+export async function send(inputPath: string | string[], opts: SendOptions = {}): Promise<SendResult> {
   const code = opts.code ?? generateCode();
   const encKey = deriveEncryptionKey(code);
   const relayKey = deriveRelayKey(code);
@@ -40,16 +39,23 @@ export async function send(inputPath: string, opts: SendOptions = {}): Promise<S
   let payload: Buffer;
   let type: 'file' | 'directory';
 
-  if (stat.isDirectory()) {
-    payload = await packDirectory(inputPath);
+  if (Array.isArray(inputPath)) {
+    // Multiple sources: pack all directories into one archive
+    payload = await packDirectories(inputPath);
     type = 'directory';
   } else {
-    // Single file: metadata header + content
-    const content = fs.readFileSync(inputPath);
-    const name = path.basename(inputPath);
-    const header = JSON.stringify({ type: 'file', name, size: content.length }) + '\n';
-    payload = Buffer.concat([Buffer.from(header, 'utf-8'), content]);
-    type = 'file';
+    const stat = fs.statSync(inputPath);
+    if (stat.isDirectory()) {
+      payload = await packDirectory(inputPath);
+      type = 'directory';
+    } else {
+      // Single file: metadata header + content
+      const content = fs.readFileSync(inputPath);
+      const name = path.basename(inputPath);
+      const header = JSON.stringify({ type: 'file', name, size: content.length }) + '\n';
+      payload = Buffer.concat([Buffer.from(header, 'utf-8'), content]);
+      type = 'file';
+    }
   }
 
   const encrypted = encrypt(payload, encKey);
@@ -98,4 +104,4 @@ export async function receive(code: string, outputDir: string = '.', opts: Trans
 export { generateCode, parseCode, isValidCode } from './codes.js';
 export { deriveEncryptionKey, deriveRelayKey, encrypt, decrypt } from './crypto.js';
 export { upload, download } from './transfer.js';
-export { packDirectory, isSlurpArchive, extractArchive } from './slurp.js';
+export { packDirectory, packDirectories, isSlurpArchive, extractArchive } from './slurp.js';

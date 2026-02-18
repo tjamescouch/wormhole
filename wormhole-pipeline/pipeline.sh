@@ -313,11 +313,21 @@ push_repo() {
     [[ ! -d "${repo_dir}/.git" ]] && return 0
     git -C "$repo_dir" remote get-url origin &>/dev/null || return 0
 
+    # Fetch origin/main once per repo to detect already-merged branches
+    git -C "$repo_dir" fetch origin main --quiet 2>/dev/null || true
+
     while IFS= read -r branch; do
         [[ -z "$branch" ]] && continue
         is_protected "$branch" && continue
 
         local head; head=$(git -C "$repo_dir" rev-parse "$branch" 2>/dev/null) || continue
+
+        # Skip branches already merged into origin/main — auto-prune stale feature branches
+        if git -C "$repo_dir" merge-base --is-ancestor "$head" "origin/main" 2>/dev/null; then
+            log "MERGED ${repo_name}/${branch} — already in origin/main, skipping"
+            clear_failed "$repo_name" "$branch"
+            continue
+        fi
 
         # Skip if same commit already failed
         local prev; prev=$(get_failed_hash "$repo_name" "$branch")

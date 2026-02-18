@@ -37,9 +37,9 @@ function usage(): void {
   console.log(`wormhole — easy encrypted file transfer
 
 Commands:
-  wormhole send <file-or-dir>    Pack, encrypt, and upload
-  wormhole receive <code>        Download, decrypt, and extract
-  wormhole relay                 Start the relay server
+  wormhole send <path> [path2 ...]   Pack, encrypt, and upload (one or more files/dirs)
+  wormhole receive <code>            Download, decrypt, and extract
+  wormhole relay                     Start the relay server
 
 Options:
   --relay, -r <url>    Relay URL (default: localhost:8787, or WORMHOLE_RELAY env)
@@ -57,18 +57,20 @@ async function main(): Promise<void> {
   const { positional, flags } = parseFlags(args.slice(1));
 
   if (command === 'send') {
-    const inputPath = positional[0];
-    if (!inputPath) {
+    if (positional.length === 0) {
       console.error('Error: no file or directory specified');
       process.exit(1);
     }
+
+    const inputPath = positional.length === 1 ? positional[0] : positional;
 
     const result = await send(inputPath, {
       relay: flags.relay,
       code: flags.code,
     });
 
-    console.log(`Sent ${result.type}: ${result.size} bytes`);
+    const sources = Array.isArray(inputPath) ? inputPath.join(', ') : inputPath;
+    console.log(`Sent ${result.type} [${sources}]: ${result.size} bytes`);
     console.log(`\nTo receive, run:\n  wormhole receive ${result.code}${flags.relay ? ` --relay ${flags.relay}` : ''}`);
 
   } else if (command === 'receive') {
