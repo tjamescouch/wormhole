@@ -95,9 +95,21 @@ is_protected() {
     return 1
 }
 
+NTFY_TOPIC="jc-argus-6f27d82f9b5b"
+
 notify() {
+    local msg="$*"
     if [[ -f "$NOTIFY_SCRIPT" ]] && command -v node &>/dev/null; then
-        node "$NOTIFY_SCRIPT" "$*" &>/dev/null &
+        node "$NOTIFY_SCRIPT" "$msg" &>/dev/null &
+    fi
+    # ntfy.sh — ping jc on errors (messages containing ❌ or ⚠️)
+    if [[ "$msg" == *"❌"* || "$msg" == *"⚠️"* || "$msg" == *"FAILED"* || "$msg" == *"ERROR"* ]]; then
+        local priority="high"
+        curl -s -o /dev/null \
+            -H "Title: Argus — System Alert" \
+            -H "Priority: $priority" \
+            -d "$msg" \
+            "https://ntfy.sh/${NTFY_TOPIC}" &
     fi
 }
 
