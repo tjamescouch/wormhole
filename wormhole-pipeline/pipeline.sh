@@ -163,6 +163,9 @@ container_heads() {
         for d in '"$SOURCE"'/*/; do
             [ -d "$d/.git" ] && echo "$(basename "$d") $(git -C "$d" rev-parse HEAD 2>/dev/null)"
         done
+        for d in '"$SOURCE"'/*/*/; do
+            [ -d "$d/.git" ] && echo "$(basename "$(dirname "$d")")/$(basename "$d") $(git -C "$d" rev-parse HEAD 2>/dev/null)"
+        done
         [ -d '"$SOURCE"'/.git ] && echo ". $(git -C '"$SOURCE"' rev-parse HEAD 2>/dev/null)"
     ' 2>/dev/null || true
 }
