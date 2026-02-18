@@ -28,6 +28,7 @@ RUN_ONCE=false
 DRY_RUN=false
 VERBOSE=false
 LOG_FILE=""
+LIMA_INSTANCE=""  # When set, prefix podman calls with: limactl shell <instance> --
 
 PROTECTED="main master"
 MERGE_REPOS=(agentchat agentstream personas visage3d agenthnsw agentcoldstorage gro agentpatch agentdrive)
@@ -53,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         --dry-run)      DRY_RUN=true; shift ;;
         --verbose)      VERBOSE=true; shift ;;
         --log)          LOG_FILE="$2"; shift 2 ;;
+        --lima)         LIMA_INSTANCE="$2"; shift 2 ;;
         -h|--help)      sed -n '2,/^$/s/^# //p' "$0"; exit 0 ;;
         *)              echo "Unknown: $1" >&2; exit 1 ;;
     esac
@@ -63,6 +65,15 @@ done
 _emit() { echo "[$(date -Iseconds)] [pipeline] $*"; }
 log()  { _emit "$@" >&2; }
 vlog() { [[ "$VERBOSE" == "true" ]] && log "$@" || true; }
+
+# ── Podman wrapper (supports --lima for Lima VM containers) ──────────────
+
+if [[ -n "$LIMA_INSTANCE" ]]; then
+    PODMAN=(limactl shell "$LIMA_INSTANCE" -- podman)
+    log "Using Lima instance: $LIMA_INSTANCE (podman via limactl)"
+else
+    PODMAN=(podman)
+fi
 
 # ── State ────────────────────────────────────────────────────────────────
 
@@ -134,7 +145,7 @@ clear_failed()    { rm -f "${FAIL_DIR}/$(fail_key "$1" "$2")"; }
 # ═══════════════════════════════════════════════════════════════════════════
 
 discover() {
-    podman ps --format '{{.ID}} {{.Names}}' 2>/dev/null | grep -E '(agent-|agentchat-)' || true
+    "${PODMAN[@]}" ps --format '{{.ID}} {{.Names}}' 2>/dev/null | grep -E '(agent-|agentchat-)' || true
 }
 
 agent_name() {
@@ -148,7 +159,7 @@ agent_name() {
 
 container_heads() {
     local cid="$1"
-    podman exec "$cid" bash -c '
+    "${PODMAN[@]}" exec "$cid" bash -c '
         for d in '"$SOURCE"'/*/; do
             [ -d "$d/.git" ] && echo "$(basename "$d") $(git -C "$d" rev-parse HEAD 2>/dev/null)"
         done
@@ -178,7 +189,7 @@ wormhole_available() {
     local cid="$1"
     if [[ "$_WORMHOLE_CHECKED" != "$cid" ]]; then
         _WORMHOLE_CHECKED="$cid"
-        if podman exec "$cid" which wormhole &>/dev/null; then
+        if "${PODMAN[@]}" exec "$cid" which wormhole &>/dev/null; then
             _WORMHOLE_AVAILABLE=true
         else
             _WORMHOLE_AVAILABLE=false
@@ -192,7 +203,7 @@ wormhole_send_receive() {
     mkdir -p "$dest"
 
     local send_output code
-    send_output=$(podman exec "$cid" wormhole send "$src_path" \
+    send_output=$("${PODMAN[@]}" exec "$cid" wormhole send "$src_path" \
         --relay "$WORMHOLE_RELAY_CONTAINER" 2>&1) || return 1
     # Parse code from: "  wormhole receive <code> ..."
     code=$(echo "$send_output" | grep -oE 'wormhole receive [0-9]+-[a-z]+-[a-z]+' | awk '{print $3}' | head -1)
@@ -208,10 +219,10 @@ tar_copy_repo() {
     mkdir -p "$dest"
     set +o pipefail
     if [[ "$repo" == "." ]]; then
-        podman exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" -C "$SOURCE" . \
+        "${PODMAN[@]}" exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" -C "$SOURCE" . \
             2>/dev/null | tar xf - -C "$dest" 2>/dev/null
     else
-        podman exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" -C "$SOURCE" "$repo" \
+        "${PODMAN[@]}" exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" -C "$SOURCE" "$repo" \
             2>/dev/null | tar xf - -C "$dest" 2>/dev/null
     fi
     set -o pipefail
@@ -255,7 +266,7 @@ copy_full() {
 
     # Fallback: tar pipe
     set +o pipefail
-    podman exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" \
+    "${PODMAN[@]}" exec "$cid" tar cf - "${TAR_EXCLUDE[@]}" \
         -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")" 2>/dev/null \
         | tar xf - -C "$tmp" --strip-components=1 2>/dev/null
     set -o pipefail
