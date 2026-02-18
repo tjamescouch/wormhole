@@ -102,9 +102,9 @@ notify() {
 }
 
 notify_error() {
-    local repo="$1" branch="$2" output="$3" head_hash="${4:-}" exit_code="${5:-}"
+    local agent="$1" repo="$2" branch="$3" output="$4" head_hash="${5:-}" exit_code="${6:-}"
     local detail=""
-    detail+="❌ PUSH FAILED ${repo}/${branch}"
+    detail+="❌ PUSH FAILED ${agent}: ${repo}/${branch}"
     [[ -n "$head_hash" ]] && detail+=" @ ${head_hash:0:7}"
     [[ -n "$exit_code" ]] && detail+=" (exit ${exit_code})"
     detail+=$'\n'"--- git output ---"$'\n'"${output}"
@@ -307,7 +307,7 @@ git_push() {
 }
 
 push_repo() {
-    local repo_dir="$1"
+    local repo_dir="$1" agent_name="${2:-unknown}"
     local repo_name; repo_name=$(basename "$repo_dir")
 
     [[ ! -d "${repo_dir}/.git" ]] && return 0
@@ -324,7 +324,7 @@ push_repo() {
 
         # Skip branches already merged into origin/main — auto-prune stale feature branches
         if git -C "$repo_dir" merge-base --is-ancestor "$head" "origin/main" 2>/dev/null; then
-            log "MERGED ${repo_name}/${branch} — already in origin/main, skipping"
+            log "MERGED ${agent_name}: ${repo_name}/${branch} — already in origin/main, skipping"
             clear_failed "$repo_name" "$branch"
             continue
         fi
@@ -342,19 +342,19 @@ push_repo() {
             if echo "$out" | grep -q "Everything up-to-date"; then
                 vlog "UP-TO-DATE ${repo_name}/${branch}"
             else
-                log "PUSHED ${repo_name}/${branch}"
-                notify "🚀 ${repo_name}/${branch}"
+                log "PUSHED ${agent_name}: ${repo_name}/${branch}"
+                notify "🚀 ${agent_name}: ${repo_name}/${branch}"
                 STATS_PUSHED=$((STATS_PUSHED + 1))
             fi
             clear_failed "$repo_name" "$branch"
             clear_auth_fails
         elif [[ $rc -eq 124 ]]; then
-            log "TIMEOUT ${repo_name}/${branch} @ ${head:0:7} — retry next cycle"
-            notify_error "${repo_name}" "${branch}" "git push timed out after 30s" "$head" "124"
+            log "TIMEOUT ${agent_name}: ${repo_name}/${branch} @ ${head:0:7} — retry next cycle"
+            notify_error "${agent_name}" "${repo_name}" "${branch}" "git push timed out after 30s" "$head" "124"
         else
-            log "PUSH ERROR ${repo_name}/${branch} @ ${head:0:7} (exit ${rc}):"
+            log "PUSH ERROR ${agent_name}: ${repo_name}/${branch} @ ${head:0:7} (exit ${rc}):"
             echo "$out" | sed 's/^/  /'
-            notify_error "${repo_name}" "${branch}" "$out" "$head" "$rc"
+            notify_error "${agent_name}" "${repo_name}" "${branch}" "$out" "$head" "$rc"
             set_failed_hash "$repo_name" "$branch" "$head"
             is_auth_error "$out" && { record_auth_fail; log "AUTH FAIL #$(get_auth_fails)"; }
         fi
@@ -362,11 +362,11 @@ push_repo() {
 }
 
 push_all_in() {
-    local dest="$1"
+    local dest="$1" agent_name="${2:-unknown}"
     for d in "$dest"/*/; do
-        [[ -d "$d/.git" ]] && push_repo "$d"
+        [[ -d "$d/.git" ]] && push_repo "$d" "$agent_name"
     done
-    [[ -d "$dest/.git" ]] && push_repo "$dest"
+    [[ -d "$dest/.git" ]] && push_repo "$dest" "$agent_name"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -486,7 +486,7 @@ main() {
                     while IFS=' ' read -r repo hash; do
                         [[ -n "$repo" && -n "$hash" ]] && HEADS["${name}/${repo}"]="$hash"
                     done < <(container_heads "$cid")
-                    push_all_in "$dest"
+                    push_all_in "$dest" "$name"
                     synced=$((synced + 1))
                 else
                     log "ERROR: bootstrap $name failed"
@@ -515,7 +515,7 @@ main() {
 
                 if copy_repo "$cid" "$repo" "$dest"; then
                     sanitize "$rdest"
-                    push_repo "$rdest"
+                    push_repo "$rdest" "$name"
                     synced=$((synced + 1))
                     STATS_SYNCED=$((STATS_SYNCED + 1))
                 else
