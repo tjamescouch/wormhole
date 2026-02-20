@@ -375,8 +375,18 @@ push_repo() {
     [[ ! -d "${repo_dir}/.git" ]] && return 0
     git -C "$repo_dir" remote get-url origin &>/dev/null || return 0
 
-    # Fetch origin/main once per repo to detect already-merged branches
-    git -C "$repo_dir" fetch origin main --quiet 2>/dev/null || true
+    # Fetch + prune to sync remote state, then delete local branches whose
+    # remote tracking branch was removed (merged and deleted on GitHub).
+    git -C "$repo_dir" fetch origin --prune --quiet 2>/dev/null || true
+    # 'gone' branches: tracking ref pruned → remote was deleted → safe to remove locally
+    git -C "$repo_dir" branch -vv 2>/dev/null \
+        | grep ': gone]' \
+        | awk '{print $1}' \
+        | while read -r gone_branch; do
+            is_protected "$gone_branch" && continue
+            vlog "PRUNE LOCAL ${repo_name}/${gone_branch} — remote branch gone"
+            git -C "$repo_dir" branch -D "$gone_branch" 2>/dev/null || true
+        done
 
     while IFS= read -r branch; do
         [[ -z "$branch" ]] && continue
