@@ -3,8 +3,17 @@
 // Usage: node push-notify.cjs <message>
 // Connects ephemerally, sends one message, disconnects.
 
-const WS_MODULE = '/opt/homebrew/lib/node_modules/@tjamescouch/agentchat/node_modules/ws';
-const WebSocket = require(WS_MODULE);
+let WebSocket;
+try {
+  WebSocket = require('/opt/homebrew/lib/node_modules/@tjamescouch/agentchat/node_modules/ws');
+} catch(e) {
+  try {
+    WebSocket = require('ws');
+  } catch(e2) {
+    console.log('push-notify: ws module not available, skipping notification');
+    process.exit(0);
+  }
+}
 
 const SERVER = process.env.AGENTCHAT_NOTIFY_URL || 'wss://agentchat-server.fly.dev';
 const CHANNEL = process.env.AGENTCHAT_NOTIFY_CHANNEL || '#pull-requests';
