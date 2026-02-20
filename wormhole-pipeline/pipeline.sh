@@ -414,11 +414,10 @@ push_repo() {
             log "TIMEOUT ${repo_name}/${branch} @ ${head:0:7} — retry next cycle"
             notify_error "${repo_name}" "${branch}" "git push timed out after 30s" "$head" "124"
         else
-            # Non-fast-forward: remote was force-pushed (rebased) or already merged.
-            # Re-fetch and re-check before treating as a real error.
+            # Non-fast-forward: remote was force-pushed (rebased) or already merged/deleted.
+            # Prune stale tracking refs first, then re-check.
             if echo "$out" | grep -q "non-fast-forward\|rejected"; then
-                git -C "$repo_dir" fetch origin main "$branch" --quiet 2>/dev/null || \
-                    git -C "$repo_dir" fetch origin main --quiet 2>/dev/null || true
+                git -C "$repo_dir" fetch origin --prune --quiet 2>/dev/null || true
                 local remote_head; remote_head=$(git -C "$repo_dir" rev-parse "origin/${branch}" 2>/dev/null) || remote_head=""
                 if [[ -z "$remote_head" ]]; then
                     log "SKIP ${repo_name}/${branch} — remote branch gone (deleted after merge)"
