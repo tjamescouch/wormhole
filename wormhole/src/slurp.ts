@@ -2,15 +2,14 @@
  * Slurp integration for directory transfers.
  *
  * Uses slurp's pack/compress for sending directories,
- * and parseArchive-equivalent logic for receiving.
+ * and slurp's parseContent for receiving (supports v1 and v4 formats).
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Import slurp from sibling directory
-// @ts-ignore - ESM cross-package import
-import { collectFiles, pack, compress, decompress, isCompressed } from '../../slurp/slurp.js';
+// @ts-ignore - vendored slurp (pure JS, no external deps)
+import { collectFiles, pack, compress, decompress, isCompressed, parseContent } from './slurp-vendor.js';
 
 export async function packDirectory(dirPath: string): Promise<Buffer> {
   const absDir = path.resolve(dirPath);
@@ -44,11 +43,15 @@ export async function packDirectories(dirPaths: string[]): Promise<Buffer> {
 
 export function isSlurpArchive(data: Buffer): boolean {
   const header = data.subarray(0, 200).toString('utf-8');
-  return header.includes('#!/bin/sh') && header.includes('SLURP');
+  // Detect v1 (#!/bin/sh + SLURP), v2 (compressed), or v4 (# --- SLURP v4 ---)
+  return (header.includes('#!/bin/sh') && header.includes('SLURP'))
+      || header.includes('# --- SLURP v')
+      || header.includes('SLURP v2 (compressed)');
 }
 
 /**
  * Parse and extract a slurp archive from a buffer to a target directory.
+ * Supports v1, v2 (compressed), and v4 archive formats.
  */
 export async function extractArchive(data: Buffer, targetDir: string): Promise<string[]> {
   let content = data.toString('utf-8');
@@ -58,8 +61,8 @@ export async function extractArchive(data: Buffer, targetDir: string): Promise<s
     content = decompress(content);
   }
 
-  // Parse the v1 archive
-  const files = parseV1Content(content);
+  // Use slurp's parseContent which handles both v1 and v4 formats
+  const { files } = parseContent(content);
   const written: string[] = [];
 
   for (const file of files) {
@@ -68,65 +71,14 @@ export async function extractArchive(data: Buffer, targetDir: string): Promise<s
     fs.mkdirSync(dir, { recursive: true });
 
     if (file.binary) {
-      fs.writeFileSync(fullPath, Buffer.from(file.content, 'base64'));
-    } else {
+      // v4 parseContent returns Buffer for binary, v1 returns Buffer too
       fs.writeFileSync(fullPath, file.content);
+    } else {
+      const text = typeof file.content === 'string' ? file.content : file.content.toString('utf-8');
+      fs.writeFileSync(fullPath, text);
     }
     written.push(file.path);
   }
 
   return written;
-}
-
-interface ParsedFile {
-  path: string;
-  content: string;
-  binary: boolean;
-}
-
-/**
- * Minimal v1 archive parser (in-memory, no temp files).
- */
-function parseV1Content(archive: string): ParsedFile[] {
-  const files: ParsedFile[] = [];
-  const lines = archive.split('\n');
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Match: cat > 'path' << 'MARKER'
-    const catMatch = line.match(/^cat\s+>\s+'([^']+)'\s+<<\s+'([^']+)'$/);
-    if (catMatch) {
-      const [, filePath, marker] = catMatch;
-      i++;
-      const contentLines: string[] = [];
-      while (i < lines.length && lines[i] !== marker) {
-        contentLines.push(lines[i]);
-        i++;
-      }
-      files.push({ path: filePath, content: contentLines.join('\n'), binary: false });
-      i++; // skip marker
-      continue;
-    }
-
-    // Match: base64 -d > 'path' << 'MARKER'
-    const b64Match = line.match(/^base64\s+-d\s+>\s+'([^']+)'\s+<<\s+'([^']+)'$/);
-    if (b64Match) {
-      const [, filePath, marker] = b64Match;
-      i++;
-      const contentLines: string[] = [];
-      while (i < lines.length && lines[i] !== marker) {
-        contentLines.push(lines[i]);
-        i++;
-      }
-      files.push({ path: filePath, content: contentLines.join('\n'), binary: true });
-      i++; // skip marker
-      continue;
-    }
-
-    i++;
-  }
-
-  return files;
 }
