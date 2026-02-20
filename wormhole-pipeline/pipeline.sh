@@ -26,6 +26,7 @@ MERGE_EVERY=120
 DELETE_OLD_DAYS=0
 RUN_ONCE=false
 DRY_RUN=false
+BACKUP_RETENTION=5
 VERBOSE=false
 LOG_FILE=""
 LIMA_INSTANCE=""  # When set, prefix podman calls with: limactl shell <instance> --
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
         --interval)     INTERVAL="$2"; shift 2 ;;
         --source)       SOURCE="$2"; shift 2 ;;
         --merge-every)  MERGE_EVERY="$2"; shift 2 ;;
+        --keep-backups) BACKUP_RETENTION="$2"; shift 2 ;;
         --delete-old)   DELETE_OLD_DAYS="$2"; shift 2 ;;
         --once)         RUN_ONCE=true; shift ;;
         --dry-run)      DRY_RUN=true; shift ;;
@@ -93,6 +95,33 @@ trap 'log "Shutting down"; RUNNING=false' SIGINT SIGTERM
 is_protected() {
     for p in $PROTECTED; do [[ "$1" == "$p" ]] && return 0; done
     return 1
+}
+
+# Rotate destination to backup before overwriting
+# Usage: rotate_backup "/path/to/dest"
+rotate_backup() {
+    local dest="$1"
+    [[ ! -e "$dest" ]] && return 0
+    
+    local ts=$(date +%Y%m%d-%H%M%S)
+    local backup="${dest}.backup.${ts}"
+    
+    vlog "BACKUP: ${dest} → ${backup}"
+    cp -a "$dest" "$backup" 2>/dev/null || {
+        log "WARN: backup copy failed for $dest"
+        return 1
+    }
+    
+    # Prune old backups, keep last N
+    local pattern="${dest}.backup.*"
+    local count=$(ls -1d $pattern 2>/dev/null | wc -l)
+    if [[ $count -gt $BACKUP_RETENTION ]]; then
+        local to_delete=$((count - BACKUP_RETENTION))
+        ls -1dt $pattern 2>/dev/null | tail -n $to_delete | while read old; do
+            vlog "PRUNE: $old"
+            rm -rf "$old"
+        done
+    fi
 }
 
 NTFY_TOPIC="jc-argus-6f27d82f9b5b"
@@ -245,6 +274,11 @@ tar_copy_repo() {
 
 copy_repo() {
     local cid="$1" repo="$2" dest="$3"
+    local rdest="${dest}/${repo}"
+    [[ "$repo" == "." ]] && rdest="$dest"
+    
+    rotate_backup "$rdest"
+    
     local src_path
     if [[ "$repo" == "." ]]; then
         src_path="$SOURCE"
@@ -263,6 +297,7 @@ copy_repo() {
 copy_full() {
     local cid="$1" dest="$2"
     local tmp="${dest}.tmp.$$"
+    rotate_backup "$dest"
     rm -rf "$tmp"; mkdir -p "$tmp"
 
     if wormhole_available "$cid"; then
