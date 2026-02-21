@@ -377,7 +377,9 @@ push_repo() {
 
     # Fetch + prune to sync remote state, then delete local branches whose
     # remote tracking branch was removed (merged and deleted on GitHub).
-    git -C "$repo_dir" fetch origin --prune --quiet 2>/dev/null || true
+    git -c core.hooksPath=/dev/null \
+        -c 'url.git@github.com:.insteadOf=https://github.com/' \
+        -C "$repo_dir" fetch origin --prune --quiet 2>/dev/null || true
     # 'gone' branches: tracking ref pruned → remote was deleted → safe to remove locally
     git -C "$repo_dir" branch -vv 2>/dev/null \
         | grep ': gone]' \
@@ -427,7 +429,9 @@ push_repo() {
             # Non-fast-forward: remote was force-pushed (rebased) or already merged/deleted.
             # Prune stale tracking refs first, then re-check.
             if echo "$out" | grep -q "non-fast-forward\|rejected"; then
-                git -C "$repo_dir" fetch origin --prune --quiet 2>/dev/null || true
+                git -c core.hooksPath=/dev/null \
+                    -c 'url.git@github.com:.insteadOf=https://github.com/' \
+                    -C "$repo_dir" fetch origin --prune --quiet 2>/dev/null || true
                 local remote_head; remote_head=$(git -C "$repo_dir" rev-parse "origin/${branch}" 2>/dev/null) || remote_head=""
                 if [[ -z "$remote_head" ]]; then
                     log "SKIP ${repo_name}/${branch} — remote branch gone (deleted after merge)"
